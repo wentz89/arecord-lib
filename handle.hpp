@@ -31,7 +31,7 @@ SOFTWARE.
 class Handle{
 public:
     Handle(){
-        fprintf(stderr, "Handle\n");
+        TR_MSG("Handle");
     };
     ~Handle(){
         if(m_handle){
@@ -56,7 +56,7 @@ public:
     };
 
 private:
-    snd_pcm_t *m_handle = nullptr;
+    snd_pcm_t *m_handle;
 };
 
 #endif

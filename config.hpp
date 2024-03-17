@@ -29,10 +29,10 @@ SOFTWARE.
 
 struct ConfigParams{
     std::string capture_file_name;
-    std::string pcm_name = "default";
+    std::string pcm_name = "hw:1,0";
     int pcm_open_mode = 0;
     snd_pcm_stream_t stream = SND_PCM_STREAM_CAPTURE;
-    snd_pcm_access_t access_mode = SND_PCM_ACCESS_RW_NONINTERLEAVED;
+    snd_pcm_access_t access_mode = SND_PCM_ACCESS_RW_INTERLEAVED;
     snd_pcm_format_t format = SND_PCM_FORMAT_S16_LE;
     snd_pcm_subformat_t subformat = SND_PCM_SUBFORMAT_STD;
     snd_pcm_uframes_t buff_frames = 0;

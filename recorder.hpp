@@ -36,7 +36,7 @@ SOFTWARE.
 
 class CaptureFile{
 public:
-    CaptureFile() = default;
+    CaptureFile() {TR_MSG("CaptureFile");};
     ~CaptureFile(){
         if(m_fd != -1){
             close();
@@ -44,12 +44,14 @@ public:
     }
 
     bool init(ConfigParams &config) {
+        TR();
         MSG_AND_RETURN_IF(m_fd != -1, false, "Already initialized");
         if(fileExists(config.capture_file_name)) {
             MSG_AND_RETURN_IF(std::remove(config.capture_file_name.c_str()) != 0, false, "Can not remove existing file");
         }
         MSG_AND_RETURN_IF(internalOpen(config.capture_file_name) == false, false, "Already initialized");
         m_fileName = config.capture_file_name;
+        TR_MSG("Init CaptureFile Done");
         // TODO create file header depending of file-type, for now just record raw data
         return true;
     };
@@ -109,7 +111,7 @@ class Recorder{
 public:
     Recorder(ConfigParams &config) : m_audioBuffer(), m_handle(), m_hwparams(), m_swparams(), m_config(config), m_file()
     {
-        fprintf(stderr, "Recorder\n");
+        TR_MSG("Recorder");
     };
     ~Recorder() = default;
 
@@ -118,35 +120,38 @@ public:
         MSG_AND_RETURN_IF(m_config.capture_file_name.empty(), false, "Name can not be empty. STDOUT currently not supported");
         MSG_AND_RETURN_IF(m_handle.init(m_config) == false, false, "Handle could not be initialized");
         TR_MSG("Pointer to Handle %p", m_handle.get());
-        MSG_AND_RETURN_IF(m_hwparams.init(m_handle.get(), m_config) == false, false, "Handle could not be initialized");
-        MSG_AND_RETURN_IF(m_swparams.init(m_handle.get(), m_config) == false, false, "Handle could not be initialized");
-        MSG_AND_RETURN_IF(m_audioBuffer.init(m_config) == false, false, "Handle could not be initialized");
+        MSG_AND_RETURN_IF(m_hwparams.init(m_handle.get(), m_config) == false, false, "HwParams could not be initialized");
+        MSG_AND_RETURN_IF(m_swparams.init(m_handle.get(), m_config) == false, false, "SwParams could not be initialized");
+        MSG_AND_RETURN_IF(m_audioBuffer.init(m_config) == false, false, "AudioBuffer could not be initialized");
         MSG_AND_RETURN_IF(m_config.duration == m_config.samples && m_config.duration == -1, false, "Duration and sample can not be both -1");
-        off_t m_bytesToRead = getBytesToRead();
+        m_bytesToRead = getBytesToRead();
         MSG_AND_RETURN_IF(m_bytesToRead == 0, false, "Zero bytes to be read");
         MSG_AND_RETURN_IF(m_file.init(m_config) == false, false, "Can not init file.");
+        TR_MSG("Initialization of Recorder done");
         // max_file_size = 0
         m_init = true;
         return true;
     };
 
     bool doRecord(){
+        TR();
         // todo do recording in thread async and inform user via callback
         if(!m_init){
-            fprintf(stderr, "Not initialized. Abort");
+            TR_MSG("Not initialized. Abort");
             return false;
         }
-
+        TR();
         off_t bytesRead = 0;
         while(bytesRead < m_bytesToRead) {
             size_t read = 0;
+            TR_MSG("Read %zu Bytes into Buffer", m_config.chunk_size);
             if(!readFromPcm(m_audioBuffer.get(), m_config.chunk_size, read)) {
                 return false;
             }
             bytesRead += read;
 
             if(!m_file.write(m_audioBuffer.get(), read)) {
-                fprintf(stderr, "Could not write to file %s", m_file.getFilename().c_str());
+                TR_MSG("Could not write to file %s", m_file.getFilename().c_str());
                 return false;
             }
         }
@@ -165,6 +170,7 @@ private:
     bool m_init = false;
 
     off_t getBytesToRead(){
+        TR();
         if(m_config.duration != -1 && m_config.samples != -1){
             fprintf(stderr, "Both duration and samples are set. Priority has samples: %d", m_config.samples);
         }
@@ -182,10 +188,14 @@ private:
     };
 
     bool readFromPcm(u_char* buff, snd_pcm_uframes_t size, size_t &read){
+        TR();
         size_t readCountTotal = 0;
         constexpr int TIMEOUT = 50;
         while(readCountTotal < size) {
-            ssize_t readCount = snd_pcm_readi(m_handle.get(), buff, size);
+            TR_MSG("Attemp to read %ld bytes.", size);
+            uint8_t data[size];
+            ssize_t readCount = snd_pcm_readi(m_handle.get(), &data, size);
+            TR_MSG("Got %ld Bytes", readCount);
             if( readCount == -EAGAIN || (readCount >= 0 && readCount < size)){
                 snd_pcm_wait(m_handle.get(), TIMEOUT); 
             }

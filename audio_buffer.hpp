@@ -35,8 +35,7 @@ constexpr size_t BITS_PER_BYTE = 8;
 class AudioBuffer{
 public:
     AudioBuffer(){
-        fprintf(stderr, "AudioBuffer\n");
-        m_audioBuffer = (u_char *)malloc(1024);
+        TR_MSG("AudioBuffer");
     };
     ~AudioBuffer(){
         if(m_audioBuffer){
@@ -50,17 +49,20 @@ public:
 
     bool init(ConfigParams& config){
         TR();
-        MSG_AND_RETURN_IF(m_audioBuffer == nullptr, false, "Audio Buffer is Null. Abort.");
+        u_char* audioBuffer = (u_char *)malloc(1024);
         config.bits_per_sample = snd_pcm_format_physical_width(config.format);
         config.bits_per_frame = config.bits_per_sample / config.channels;
         config.chunk_bytes = config.chunk_size * config.bits_per_frame / BITS_PER_BYTE;
-        m_audioBuffer = (u_char*)realloc(m_audioBuffer, config.chunk_bytes);
+        TR_MSG("Allocation %ld Bytes", config.chunk_bytes);
+        m_audioBuffer = (u_char*)realloc(audioBuffer, config.chunk_bytes);
+        m_audioBuffer = audioBuffer;
         MSG_AND_RETURN_IF(m_audioBuffer == nullptr, false, "Could not allocate memory");
         config.buff_frames = config.buffer_size;
+        TR_MSG("Audio Buffer Done Init");
         return true;
     };
 private:
-    u_char *m_audioBuffer = nullptr;
+    u_char *m_audioBuffer;
 };
 
 #endif
