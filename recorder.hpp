@@ -113,7 +113,7 @@ public:
     {
         TR_MSG("Recorder");
     };
-    ~Recorder() = default;
+    ~Recorder() {};
 
     bool init(){
         TR();
@@ -140,7 +140,6 @@ public:
             TR_MSG("Not initialized. Abort");
             return false;
         }
-        TR();
         off_t bytesRead = 0;
         while(bytesRead < m_bytesToRead) {
             size_t read = 0;
@@ -190,18 +189,16 @@ private:
     bool readFromPcm(u_char* buff, snd_pcm_uframes_t size, size_t &read){
         TR();
         size_t readCountTotal = 0;
-        constexpr int TIMEOUT = 50;
+        size_t toRead = 1024;
         while(readCountTotal < size) {
             TR_MSG("Attemp to read %ld bytes.", size);
-            uint8_t data[size];
-            ssize_t readCount = snd_pcm_readi(m_handle.get(), &data, size);
-            TR_MSG("Got %ld Bytes", readCount);
-            if( readCount == -EAGAIN || (readCount >= 0 && readCount < size)){
-                snd_pcm_wait(m_handle.get(), TIMEOUT); 
-            }
+            ssize_t readCount = snd_pcm_readi(m_handle.get(), buff, size);
+            // if( readCount == -EAGAIN || (readCount >= 0 && readCount < size)){
+            //     snd_pcm_wait(m_handle.get(), TIMEOUT); 
+            // }
             // TODO handle pcm_state_changes (-EPIPE) ? see xrun
             // TODO handle pcm_resume (-ESTRPIPE) ? see suspend
-            else if(readCount < 0){
+            if(readCount < 0){
                 fprintf(stderr, "General Error. Abort");
                 return false;
             }

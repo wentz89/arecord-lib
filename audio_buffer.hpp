@@ -25,7 +25,9 @@ SOFTWARE.
 #ifndef _AUDIO_BUFFER_H_
 #define _AUDIO_BUFFER_H_
 
+extern "C"{
 #include <alsa/asoundlib.h>
+}
 
 #include "common.hpp"
 #include "snd_pcm_params.hpp"

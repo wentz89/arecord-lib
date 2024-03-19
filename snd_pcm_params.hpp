@@ -24,8 +24,11 @@ SOFTWARE.
 #ifndef _SND_PCM_PARAMS_H_
 #define _SND_PCM_PARAMS_H_
 
+extern "C"{
 #include <alsa/asoundlib.h>
 #include <alsa/pcm.h>
+}
+
 
 #include "common.hpp"
 #include "config.hpp"

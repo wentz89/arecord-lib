@@ -24,7 +24,9 @@ SOFTWARE.
 #ifndef _HANDLE_H_
 #define _HANDLE_H_
 
+extern "C" {
 #include <alsa/asoundlib.h>
+}
 #include "config.hpp"
 #include "common.hpp"
 
@@ -34,10 +36,9 @@ public:
         TR_MSG("Handle");
     };
     ~Handle(){
+        snd_pcm_drain(m_handle);
         if(m_handle){
             snd_pcm_close(m_handle);
-            free(m_handle);
-            m_handle = nullptr;
         }
     };
 
@@ -51,7 +52,7 @@ public:
         return true;
     };
 
-    snd_pcm_t* get() {
+    inline snd_pcm_t* get() {
         return m_handle;
     };
 
