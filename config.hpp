@@ -28,35 +28,31 @@ extern "C"{
 }
 #include <string>
 
-/*
-Hardware PCM card 1 'HD-Audio Generic' device 0 subdevice 0
-Its setup is:
-  stream       : CAPTURE
-  access       : RW_INTERLEAVED
-  format       : S16_LE
-  subformat    : STD
-  channels     : 2
-  rate         : 48000
-  exact rate   : 48000 (48000/1)
-  msbits       : 16
-  buffer_size  : 24064
-  period_size  : 6016
-  period_time  : 125333
-  tstamp_mode  : NONE
-  tstamp_type  : MONOTONIC
-  period_step  : 1
-  avail_min    : 6016
-  period_event : 0
-  start_threshold  : 1
-  stop_threshold   : 24064
-  silence_threshold: 0
-  silence_size : 0
-  boundary     : 6773413839565225984
-  appl_ptr     : 0
-  hw_ptr       : 0
-^CAborted by signal Interrupt...
-*/
+struct HwConfig{
+  std::string pcm_name = "default";
+  unsigned int channels = 2;
+  unsigned int rate = 48000;
+  snd_pcm_access_t access_mode = SND_PCM_ACCESS_RW_INTERLEAVED;
+  snd_pcm_format_t format = SND_PCM_FORMAT_S16_LE;
+  snd_pcm_stream_t stream = SND_PCM_STREAM_CAPTURE;
+  // optional will be set internaly if -1
+  int size_near = -1;
+};
 
+enum CAPTURE_MODE{
+  STDOUT = 0x1,
+  RAW    = 0x2,
+  WAV    = 0x4
+};
+
+struct CaptureConfig{
+  std::string raw_file_name = "";
+  std::string wav_file_name = "";
+  CAPTURE_MODE mode = CAPTURE_MODE::STDOUT;
+  bool overwriteExistingFiles = true;
+};
+
+/*
 struct ConfigParams{
     std::string capture_file_name;
     std::string pcm_name = "hw:1,0";
@@ -85,5 +81,6 @@ struct ConfigParams{
     int duration = -1;
     int samples = 16384;
 };
+*/
 
 #endif

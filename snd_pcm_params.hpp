@@ -29,10 +29,20 @@ extern "C"{
 #include <alsa/pcm.h>
 }
 
+#include <map>
 
 #include "common.hpp"
 #include "config.hpp"
-             
+
+std::map<_snd_pcm_format, uint8_t> format2bytes =  {
+    {SND_PCM_FORMAT_S8, 1},
+    {SND_PCM_FORMAT_U8, 1},
+    {SND_PCM_FORMAT_S16_LE, 2},
+    {SND_PCM_FORMAT_S16_BE, 2},
+    {SND_PCM_FORMAT_U16_LE, 2},
+    {SND_PCM_FORMAT_U16_BE, 2}
+    // todo finish this
+};
 
 class HwParams{
 public:
@@ -44,65 +54,106 @@ public:
         // TODO
     };
 
-    bool init(snd_pcm_t *handle, ConfigParams& config){
+    bool init(snd_pcm_t *handle, HwConfig& config){
         TR();
-        snd_pcm_hw_params_t *params;
-        snd_pcm_hw_params_alloca(&params);
+        //snd_pcm_hw_params_t *params;
+        snd_pcm_hw_params_alloca(&m_param);
         MSG_AND_RETURN_IF(handle == nullptr, false, "Handle is null");
-        MSG_AND_RETURN_IF(snd_pcm_hw_params_any(handle, params) < 0, false, "Configuration for PCM broken.");
-        MSG_AND_RETURN_IF(snd_pcm_hw_params_set_access(handle, params, config.access_mode) < 0, false, "Fail to set access mode %d", config.access_mode);
-        MSG_AND_RETURN_IF(snd_pcm_hw_params_set_format(handle, params, config.format) < 0, false, "Fail to set format %d", config.format);
-        MSG_AND_RETURN_IF(snd_pcm_hw_params_set_subformat(handle, params, config.subformat) < 0, false, "Fail to set subformat %d", config.subformat);
-        MSG_AND_RETURN_IF(snd_pcm_hw_params_set_channels(handle, params, config.channels) < 0, false, "Fail to set channels %d", config.channels);
-        MSG_AND_RETURN_IF(snd_pcm_hw_params_set_rate_near(handle, params, &config.rate, 0) < 0, false, "Fail to set rate %u", config.rate);
-        MSG_AND_RETURN_IF(updateBuffer(handle, config, params) != true, false, "Failed to update Buffer Parameter");
-        MSG_AND_RETURN_IF(updatePeriod(handle, config, params) != true, false, "Failed to update Period Parameter");
-        MSG_AND_RETURN_IF(snd_pcm_hw_params(handle, params) < 0, false, "Could not set HW Params");
-        MSG_AND_RETURN_IF(checkSize(handle, config, params) != true, false, "Could not set HW Params");
-        m_param = params;
+        MSG_AND_RETURN_IF(snd_pcm_hw_params_any(handle, m_param) < 0, false, "Configuration for PCM broken.");
+        MSG_AND_RETURN_IF(snd_pcm_hw_params_set_access(handle, m_param, config.access_mode) < 0, false, "Fail to set access mode %d", config.access_mode);
+        MSG_AND_RETURN_IF(snd_pcm_hw_params_set_format(handle, m_param, config.format) < 0, false, "Fail to set format %d", config.format);
+        MSG_AND_RETURN_IF(snd_pcm_hw_params_set_channels(handle, m_param, config.channels) < 0, false, "Fail to set channels %d", config.channels);
+        MSG_AND_RETURN_IF(snd_pcm_hw_params_set_rate_near(handle, m_param, &config.rate, 0) < 0, false, "Fail to set rate %u", config.rate);
+        if(config.size_near > 0) {
+            snd_pcm_uframes_t val = (snd_pcm_uframes_t)config.size_near;
+            MSG_AND_RETURN_IF(snd_pcm_hw_params_set_period_size_near(handle, m_param, &val, 0) < 0, false, "Fail to set size near %zu", val);
+        }
+        MSG_AND_RETURN_IF(snd_pcm_hw_params(handle, m_param) < 0, false, "Could not set HW Params");
+        m_config = config;
+        MSG_AND_RETURN_IF(snd_pcm_hw_params_get_period_size(m_param, &m_periodSizeInSamples, 0) < 0, false, "could not get period size near.");
         return true;
     };
+
+    int getPeriodSizeInBytes(){
+        int samples = getPeriodSizeInSamples();
+        if(samples < 0){
+            TR_MSG("get samples failed");
+            return -1;
+        }
+        int bytesPerSample = getBytesPerSample();
+        if(bytesPerSample < 0){
+            TR_MSG("get bytes per sample failed");
+            return -1;
+        }
+        unsigned int val = samples * bytesPerSample;
+        TR_MSG("Period Size in Bytes: %u", val);
+        return val > INT_MAX ? -1 : (int)val;
+    }
+
+    int getPeriodSizeInSamples(){
+        /*
+        snd_pcm_uframes_t size;
+        int res = snd_pcm_hw_params_get_period_size(m_param, &size, 0);
+        if(res < 0){
+            TR_MSG("get samples per period failed");
+            return -1;
+        }
+        TR_MSG("Period Size in Samples: %zu", size);
+        return (unsigned int)size > INT_MAX ? -1 : (int)size;
+        */
+        return m_periodSizeInSamples;
+    }
+
+    int getBytesPerSample(){
+        snd_pcm_format_t format = m_config.format;
+        /*
+         * same problem as for get_channels below
+        int res = snd_pcm_hw_params_get_format(m_param, &format);
+        if(res < 0){
+            TR_MSG("get formate failed");
+            return -1;
+        }
+        */
+        auto it = format2bytes.find(format);
+        if(it == format2bytes.end()){
+            TR_MSG("could not find formate %d", format);
+            return -1;
+        }
+        uint8_t bytesPerSample = it->second;
+        /*
+         * Although this code works when called in init() it does not here.
+         * I am pretty confused and dont know why...
+        unsigned int numChannels = 0;
+        res = snd_pcm_hw_params_get_channels(m_param, &numChannels);
+        if(res < 0){
+            TR_MSG("get channels failed");
+            return -1;
+        }
+        */
+        unsigned int val = bytesPerSample * m_config.channels;
+        TR_MSG("Bytes per sample: %u", val);
+        return val > INT_MAX ? -1 : (int)val;
+    }
+
+    int getPeriodTimeUs(){
+        unsigned int val;
+        int res = snd_pcm_hw_params_get_period_time(m_param, &val, 0);
+        if(res < 0){
+            TR_MSG("get period time failed");
+            return -1;
+        }
+        TR_MSG("Period Time: %u us", val);
+        return val > INT_MAX ? -1 : (int)val;
+    }
 
 private:
     snd_pcm_hw_params_t *m_param;
-
-    bool updateBuffer(snd_pcm_t *handle, ConfigParams& config, snd_pcm_hw_params_t *params) {
-        TR();
-        if(config.buffer_time > 0){
-            MSG_AND_RETURN_IF(snd_pcm_hw_params_set_buffer_time_near(handle, params, &config.buffer_time, 0) < 0, false, "Could not set Buffer Time to %u", config.buffer_time);
-        } else if( config.buffer_time == 0 && config.buff_frames > 0) {
-            MSG_AND_RETURN_IF(snd_pcm_hw_params_set_buffer_size_near(handle, params, &config.buff_frames) < 0, false, "Could not set Buffer size to %zu", config.buff_frames);
-        } else {
-            MSG_AND_RETURN_IF(snd_pcm_hw_params_get_buffer_time_max(params, &config.buffer_time, 0) < 0, -1, "Not able to get Max Buffer Time");
-            MSG_AND_RETURN_IF(snd_pcm_hw_params_set_buffer_time_near(handle, params, &config.buffer_time, 0) < 0, false, "Could not set Buffer Time to %u", config.buffer_time);
-        }
-        return true;
-    };
-
-    bool updatePeriod(snd_pcm_t *handle, ConfigParams& config, snd_pcm_hw_params_t *params) {
-        TR();
-        if(config.period_frames == 0 && config.period_time == 0){
-            config.period_frames = config.buff_frames / 4;
-            config.period_time = config.buffer_time / 4;
-        }
-
-        if(config.period_time > 0){
-            MSG_AND_RETURN_IF(snd_pcm_hw_params_set_period_time_near(handle, params, &config.period_time, 0) < 0, false, "Could not set Period Time to %u", config.period_time);
-        } else if( config.period_time == 0 && config.period_frames > 0) {
-            MSG_AND_RETURN_IF(snd_pcm_hw_params_set_period_size_near(handle, params, &config.period_frames, 0) < 0, false, "Could not set period size to %zu", config.period_frames);
-        }
-        return true;
-    };
-
-    bool checkSize(snd_pcm_t *handle, ConfigParams& config, snd_pcm_hw_params_t *params) {
-        TR();
-        MSG_AND_RETURN_IF(snd_pcm_hw_params_get_period_size(params, &config.chunk_size, 0) < 0, false, "Could not get period size");
-        MSG_AND_RETURN_IF(snd_pcm_hw_params_get_buffer_size(params, &config.buffer_size) < 0, false, "Could not get buffer size");
-        MSG_AND_RETURN_IF(config.buffer_size == config.chunk_size, false, "Buffer Size and Chunk Size should not be equal.");
-        return true;
-    }
+    snd_pcm_uframes_t m_periodSizeInSamples;
+    HwConfig m_config;
 };
+#endif
 
+/*
 class SwParams{
 public:
     SwParams(){
@@ -112,7 +163,7 @@ public:
         // todo
     };
 
-    bool init(snd_pcm_t *handle, ConfigParams& config){
+    bool init(snd_pcm_t *handle, HwConfig& config){
         TR();
         snd_pcm_sw_params_t *param;
         snd_pcm_sw_params_alloca(&param);
@@ -133,5 +184,4 @@ public:
 private:
     snd_pcm_sw_params_t *m_param;
 };
-
-#endif
+*/

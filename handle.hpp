@@ -42,11 +42,11 @@ public:
         }
     };
 
-    bool init(ConfigParams& config){
+    bool init(HwConfig& config){
         TR();
         snd_pcm_info_t *pcminfo;
         snd_pcm_info_alloca(&pcminfo);
-        MSG_AND_RETURN_IF(snd_pcm_open(&m_handle, config.pcm_name.c_str(), config.stream, config.pcm_open_mode) < 0, false, "Error open PCM. Abort.");
+        MSG_AND_RETURN_IF(snd_pcm_open(&m_handle, config.pcm_name.c_str(), config.stream, 0) < 0, false, "Error open PCM. Abort.");
         MSG_AND_RETURN_IF(snd_pcm_info(m_handle, pcminfo) < 0, false, "pcm_info error. Abort.");
         // TODO nonblock ?
         return true;

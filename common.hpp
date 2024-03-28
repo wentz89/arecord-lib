@@ -29,7 +29,7 @@ SOFTWARE.
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
-
+#define BITS_PER_BYTE 8
 
 #define MSG_AND_RETURN_IF(cond, val, ...) do {  \
     if(cond){                                   \

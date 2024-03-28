@@ -2,21 +2,22 @@
 #include "recorder.hpp"
 
 int main(){
-    ConfigParams config{};
-    // arecord -D hw:1,0 -c2 -fS16_LE -r48000 test.wav
-    config.pcm_name = "hw:1,0";
-    config.capture_file_name = "/home/alex/capture_test";
-    fprintf(stderr, "Main\n");
-    Recorder rec{config};
+    HwConfig config{};
+    CaptureConfig cconfig{};
+    cconfig.mode = CAPTURE_MODE::WAV;
+    cconfig.wav_file_name = "/tmp/wav_record.wav";
+    cconfig.overwriteExistingFiles = true;
+    Recorder rec{config, cconfig};
     if(!rec.init()){
         fprintf(stderr, "could not init recorder\n");
         return 1;
     }
 
-    if(!rec.doRecord()){
-        fprintf(stderr, "could not record\n");
-        return 1;
-    }
+    rec.start();
+    usleep(10000000);
+    rec.stop();
+    usleep(500000);
+    fprintf(stderr, "Finished %s", rec.hasFinished() ? "true": "false" );
 
     return 0;
 }

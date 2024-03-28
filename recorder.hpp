@@ -26,90 +26,26 @@ SOFTWARE.
 
 #include <climits>
 #include <fstream>
+#include <thread>
+#include <atomic>
 #include <stdlib.h>
 
-#include "audio_buffer.hpp"
+//#include "audio_buffer.hpp"
 #include "config.hpp"
 #include "snd_pcm_params.hpp"
 #include "handle.hpp"
 #include "common.hpp"
+#include "capture_handle.hpp"
 
-class CaptureFile{
-public:
-    CaptureFile() {TR_MSG("CaptureFile");};
-    ~CaptureFile(){
-        if(m_fd != -1){
-            close();
-        }
-    }
+enum class DurationMs : int;
+enum class SampleCount : int;
 
-    bool init(ConfigParams &config) {
-        TR();
-        MSG_AND_RETURN_IF(m_fd != -1, false, "Already initialized");
-        if(fileExists(config.capture_file_name)) {
-            MSG_AND_RETURN_IF(std::remove(config.capture_file_name.c_str()) != 0, false, "Can not remove existing file");
-        }
-        MSG_AND_RETURN_IF(internalOpen(config.capture_file_name) == false, false, "Already initialized");
-        m_fileName = config.capture_file_name;
-        TR_MSG("Init CaptureFile Done");
-        // TODO create file header depending of file-type, for now just record raw data
-        return true;
-    };
-
-    bool write(u_char *buff, size_t size){
-        if(m_fd == -1){
-            return false;
-        }
-        size_t off = 0;
-        while( off < size ){
-            int res = ::write(m_fd, buff + off, size - off);
-            if(res < 0) {
-                return false;
-            }
-            off += res;
-        }
-        // todo store global offset?
-        return true;
-    }
-
-    void close(){
-        ::close(m_fd);
-        m_fd = -1;
-    };
-
-    int get() {
-        return m_fd;
-    };
-
-    std::string getFilename() {
-        return m_fileName;
-    }
-
-private:
-    int m_fd = -1;
-    std::string m_fileName = "";
-
-    bool fileExists (const std::string& name) {
-        std::ifstream f(name.c_str());
-        return f.good();
-    };
-
-    bool internalOpen(std::string& fname) {
-        m_fd = open(fname.c_str(), O_WRONLY | O_CREAT, 0644);
-        if(m_fd == -1) {
-            fprintf(stderr, "Open %s failed: %s", fname.c_str(), strerror(errno));
-            if(errno == ENOENT) {
-                fprintf(stderr, "Can not create new directories.");
-            }
-            return false;
-        }
-        return true;
-    };
-};
+constexpr int INFINITE = -1;
+constexpr int DEFAULT_RECORDER_SIZE_NEAR = 512;
 
 class Recorder{
 public:
-    Recorder(ConfigParams &config) : m_audioBuffer(), m_handle(), m_hwparams(), m_swparams(), m_config(config), m_file()
+    Recorder(HwConfig &config, CaptureConfig capture) : m_handle(), m_thread(), m_hwparams(), m_config(config), m_capture(capture)
     {
         TR_MSG("Recorder");
     };
@@ -117,95 +53,121 @@ public:
 
     bool init(){
         TR();
-        MSG_AND_RETURN_IF(m_config.capture_file_name.empty(), false, "Name can not be empty. STDOUT currently not supported");
+        if(m_config.size_near < 0){
+            m_config.size_near = DEFAULT_RECORDER_SIZE_NEAR;
+        }
         MSG_AND_RETURN_IF(m_handle.init(m_config) == false, false, "Handle could not be initialized");
-        TR_MSG("Pointer to Handle %p", m_handle.get());
         MSG_AND_RETURN_IF(m_hwparams.init(m_handle.get(), m_config) == false, false, "HwParams could not be initialized");
-        MSG_AND_RETURN_IF(m_swparams.init(m_handle.get(), m_config) == false, false, "SwParams could not be initialized");
-        MSG_AND_RETURN_IF(m_audioBuffer.init(m_config) == false, false, "AudioBuffer could not be initialized");
-        MSG_AND_RETURN_IF(m_config.duration == m_config.samples && m_config.duration == -1, false, "Duration and sample can not be both -1");
-        m_bytesToRead = getBytesToRead();
-        MSG_AND_RETURN_IF(m_bytesToRead == 0, false, "Zero bytes to be read");
-        MSG_AND_RETURN_IF(m_file.init(m_config) == false, false, "Can not init file.");
-        TR_MSG("Initialization of Recorder done");
-        // max_file_size = 0
+        m_periodTimeUs = m_hwparams.getPeriodTimeUs();
+        MSG_AND_RETURN_IF(m_periodTimeUs <= 0, false, "Failed to get Period Time.");
+        m_periodSizeInBytes = m_hwparams.getPeriodSizeInBytes();
+        MSG_AND_RETURN_IF(m_periodSizeInBytes < 0, false, "Failed to get Period Size.");
+        int bytesPerSample = m_hwparams.getBytesPerSample();
+        MSG_AND_RETURN_IF(bytesPerSample < 0, false, "failed to get bytes per sample");
+        MSG_AND_RETURN_IF(m_capture.init(m_config, bytesPerSample) == false, false, "Failed init capture handler");
         m_init = true;
         return true;
     };
 
-    bool doRecord(){
-        TR();
-        // todo do recording in thread async and inform user via callback
+    bool start(){
+        SampleCount count = static_cast<SampleCount>(INFINITE);
+        return start(count);
+    }
+
+    bool start(DurationMs duration){
+        if((int)duration < 0){
+            return start();
+        }
+        unsigned int durUs = static_cast<unsigned int>(duration) * 1000;
+        double periodCount = durUs / m_periodTimeUs;
+        double sampleCount = periodCount * (double)m_hwparams.getPeriodSizeInSamples();
+        SampleCount count = static_cast<SampleCount>(sampleCount+0.5); // magic to always round up
+        return start(count);
+    }
+
+    bool start(SampleCount count){
         if(!m_init){
-            TR_MSG("Not initialized. Abort");
             return false;
         }
+        m_stop = false;
+        m_isFinished = false;
+        m_thread = std::thread(&Recorder::internalStart, this, (int)count);
+        return true;
+    }
+
+    void stop(bool force = false){
+        m_stop = true;
+        if(force){
+            // todo use native thread handle and kill
+        }
+    }
+
+    bool hasFinished(){
+        return m_isFinished;
+    }
+
+private:
+    Handle m_handle;
+    std::thread m_thread;
+    HwParams m_hwparams;
+    HwConfig m_config;
+    CaptureHandle m_capture;
+    std::atomic_bool m_stop{false};
+    std::atomic_bool m_isFinished{false};
+    bool m_init = false;
+    int m_periodTimeUs = 0;
+    int m_periodSizeInBytes = 0;
+
+    void internalStart(int totalSamplesToRead){
+        int bytesPerSample = m_hwparams.getBytesPerSample();
+
+        unsigned int totalBytesToRead = totalSamplesToRead * bytesPerSample;
+        unsigned int loopCount = totalBytesToRead / m_periodSizeInBytes;
+
+        u_char* buffer = (u_char*)malloc(m_periodSizeInBytes);
         off_t bytesRead = 0;
-        while(bytesRead < m_bytesToRead) {
+        int samplesPerPeriod = m_hwparams.getPeriodSizeInSamples();
+        if(bytesPerSample < 0 || samplesPerPeriod < 0 ){
+            TR_MSG("Abort. Samples|Bytes = %d|%d",samplesPerPeriod, bytesPerSample);
+            m_isFinished = true;
+            return;
+        }
+        TR_MSG("Attempt to read %d samples", totalSamplesToRead);
+        while((!m_stop && totalSamplesToRead == INFINITE) 
+              || ( totalSamplesToRead != INFINITE && bytesRead < totalBytesToRead && !m_stop)) {
             size_t read = 0;
-            TR_MSG("Read %zu Bytes into Buffer", m_config.chunk_size);
-            if(!readFromPcm(m_audioBuffer.get(), m_config.chunk_size, read)) {
-                return false;
+            if(!readFromPcm(buffer, samplesPerPeriod, bytesPerSample, read)) {
+                break;
             }
             bytesRead += read;
 
-            if(!m_file.write(m_audioBuffer.get(), read)) {
-                TR_MSG("Could not write to file %s", m_file.getFilename().c_str());
-                return false;
+            if(!m_capture.write(buffer, read)) {
+                TR_MSG("Failed to write.");
+                break;
             }
         }
-        m_file.close();
-        return true;
-    };
+        m_isFinished = true;
+    }
 
-private:
-    AudioBuffer m_audioBuffer;
-    Handle m_handle;
-    HwParams m_hwparams;
-    SwParams m_swparams;
-    ConfigParams m_config;
-    CaptureFile m_file;
-    off_t m_bytesToRead = 0;
-    bool m_init = false;
-
-    off_t getBytesToRead(){
-        TR();
-        if(m_config.duration != -1 && m_config.samples != -1){
-            fprintf(stderr, "Both duration and samples are set. Priority has samples: %d", m_config.samples);
-        }
-        off_t bytes = 0;
-        if(m_config.samples > -1){
-            bytes = snd_pcm_format_size(m_config.format, m_config.samples * m_config.channels);
-        }
-        else if(m_config.duration > -1){
-            bytes = snd_pcm_format_size(m_config.format, m_config.rate * m_config.channels);
-            bytes *= (off_t)m_config.duration;
-        }
-        // normalize bytes
-        bytes = bytes < LLONG_MAX ? bytes + bytes % 2 : bytes - bytes % 2;
-        return bytes;
-    };
-
-    bool readFromPcm(u_char* buff, snd_pcm_uframes_t size, size_t &read){
-        TR();
+    bool readFromPcm(u_char* buff, snd_pcm_uframes_t samplesToRead, int bytesPerSample, size_t &read){
         size_t readCountTotal = 0;
-        size_t toRead = 1024;
-        while(readCountTotal < size) {
-            TR_MSG("Attemp to read %ld bytes.", size);
-            ssize_t readCount = snd_pcm_readi(m_handle.get(), buff, size);
-            // if( readCount == -EAGAIN || (readCount >= 0 && readCount < size)){
-            //     snd_pcm_wait(m_handle.get(), TIMEOUT); 
-            // }
-            // TODO handle pcm_state_changes (-EPIPE) ? see xrun
-            // TODO handle pcm_resume (-ESTRPIPE) ? see suspend
+        while(readCountTotal < samplesToRead) {
+            ssize_t readCount = 0;
+            buff += (readCount * bytesPerSample);
+            snd_pcm_uframes_t toRead = samplesToRead - readCountTotal;
+            readCount = snd_pcm_readi(m_handle.get(), buff, toRead);
+            if (readCount == -EPIPE) {
+                TR_MSG("pipe overrun occurred");
+                snd_pcm_prepare(m_handle.get());
+                continue;
+            }
             if(readCount < 0){
-                fprintf(stderr, "General Error. Abort");
+                TR_MSG("General Error. Abort");
                 return false;
             }
             readCountTotal += readCount;
-            buff += readCount * m_config.bits_per_frame / BITS_PER_BYTE;
         }
-        read = readCountTotal;
+        read = readCountTotal * bytesPerSample ;
         return true;
     };
 };

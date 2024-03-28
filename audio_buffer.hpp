@@ -49,7 +49,7 @@ public:
         return m_audioBuffer;
     };
 
-    bool init(ConfigParams& config){
+    bool init(HwConfig& config){
         TR();
         u_char* audioBuffer = (u_char *)malloc(1024);
         config.bits_per_sample = snd_pcm_format_physical_width(config.format);
