@@ -14,5 +14,8 @@ find_library(ALSA asound)
 #  LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
 #)
 
-add_executable(test arecord2.cpp recorder.hpp audio_buffer.hpp common.hpp config.hpp handle.hpp snd_pcm_params.hpp)
+add_executable(test 
+  arecord2.cpp recorder.hpp
+  common.hpp config.hpp handle.hpp snd_pcm_params.hpp capture_handle.hpp
+)
 target_link_libraries(test PRIVATE ${ALSA})
