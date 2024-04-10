@@ -25,14 +25,12 @@ SOFTWARE.
 #ifndef _AUDIO_BUFFER_H_
 #define _AUDIO_BUFFER_H_
 
-extern "C"{
-#include <alsa/asoundlib.h>
-}
+#include <cstdlib>
+#include <mutex>
+#include <stdint.h>
 
 #include "common.hpp"
-#include "snd_pcm_params.hpp"
 
-constexpr size_t BITS_PER_BYTE = 8;
 
 class AudioBuffer{
 public:
@@ -45,26 +43,60 @@ public:
         }
     };
 
-    u_char* get() {
+    uint8_t* get() {
+        std::lock_guard<std::mutex> lock(m_mutex);
         return m_audioBuffer;
     };
 
-    bool init(HwConfig& config){
-        TR();
-        u_char* audioBuffer = (u_char *)malloc(1024);
-        config.bits_per_sample = snd_pcm_format_physical_width(config.format);
-        config.bits_per_frame = config.bits_per_sample / config.channels;
-        config.chunk_bytes = config.chunk_size * config.bits_per_frame / BITS_PER_BYTE;
-        TR_MSG("Allocation %ld Bytes", config.chunk_bytes);
-        m_audioBuffer = (u_char*)realloc(audioBuffer, config.chunk_bytes);
-        m_audioBuffer = audioBuffer;
+    bool init(uint64_t maxSize){
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if(m_audioBuffer) {
+            free(m_audioBuffer);
+            m_audioBuffer = nullptr;
+        }
+        TR_MSG("Allocation %zu Bytes", maxSize);
+        m_audioBuffer = (uint8_t *)malloc(maxSize);
         MSG_AND_RETURN_IF(m_audioBuffer == nullptr, false, "Could not allocate memory");
-        config.buff_frames = config.buffer_size;
-        TR_MSG("Audio Buffer Done Init");
+        m_maxSize = maxSize;
+        m_pos = 0;
+        m_size = 0;
         return true;
     };
+
+    void add(uint8_t* data, uint64_t size){
+        std::lock_guard<std::mutex> lock(m_mutex);
+        // Cases
+        // size = maxSize -> (easy)  memcpy(m_audioBuffer + 0, data + 0, size); m_pos += size % maxSize // +0;
+        // size > maxSize -> add last n bytes. n = maxSize, data += (size - maxSize), m_pos += n % maxSize
+        // size < maxSize
+        //      m_pos + size < maxSize -> memcpy(m_audioBuffer + m_pos, data + 0, size); m_pos += size % maxSize // + size;
+        //      m_pos + size > maxSize -> memcpy(m_audioBuffer + m_pos, data + 0, size - off1); // update pos; memcpy(m_audioBuffer + m_pos, data + off2, size - off3);
+        bool exceedsMaxSize = size >= m_maxSize;
+        bool hasRollover = ((m_pos + size) > m_maxSize) && !exceedsMaxSize;
+        uint64_t sizeToAdd = (hasRollover || exceedsMaxSize) * (m_maxSize - m_pos) + !hasRollover * size;
+        uint64_t dataOffset = exceedsMaxSize * (size - m_maxSize) + !exceedsMaxSize * 0;
+        uint64_t bufferOffset = exceedsMaxSize * 0 + !exceedsMaxSize * m_pos;
+    
+        memcpy(m_audioBuffer + bufferOffset, data + dataOffset, sizeToAdd);
+        if(hasRollover){
+            uint64_t remaining = size - sizeToAdd;
+            uint64_t off2 = sizeToAdd;
+            memcpy(m_audioBuffer + 0, data + off2, remaining);
+        }
+        m_size = full() ? m_maxSize : m_size + sizeToAdd;
+        m_pos += size;
+    }
+
+    bool full(){
+        return m_size == m_maxSize;
+    }
+
 private:
-    u_char *m_audioBuffer;
+    uint8_t *m_audioBuffer = nullptr;
+    uint64_t m_maxSize;
+    uint64_t m_pos = 0;
+    uint64_t m_size = 0;
+    std::mutex m_mutex;
 };
 
 #endif
